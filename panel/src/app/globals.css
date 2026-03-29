@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* 70% — Neutral base (backgrounds, large areas) */
+  --background: #fafafa;
+  --foreground: #111827;
+
+  /* 20% — Secondary surfaces (cards, borders, inputs) */
+  --muted: #f3f4f6;
+  --muted-foreground: #6b7280;
+  --card: #ffffff;
+  --card-foreground: #111827;
+  --border: #e5e7eb;
+  --input: #e5e7eb;
+  --secondary: #f3f4f6;
+  --secondary-foreground: #1f2937;
+
+  /* 10% — Accent / brand (CTAs, active nav, chart highlights) */
+  --primary: #7c3aed;
+  --primary-foreground: #ffffff;
+  --accent: #ede9fe;
+  --accent-foreground: #5b21b6;
+  --destructive: #ef4444;
+  --destructive-foreground: #fafafa;
+  --ring: #7c3aed;
+  --radius: 0.625rem;
+
+  /* Chart palette */
+  --chart-1: #7c3aed;
+  --chart-2: #06b6d4;
+  --chart-3: #f59e0b;
+  --chart-4: #10b981;
+  --chart-5: #f43f5e;
+  --chart-6: #6366f1;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Focus ring utility */
+*:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}

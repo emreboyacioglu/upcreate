@@ -1,0 +1,1189 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Upcreate Creator Intelligence API",
+    "description": "Backend API for creator metrics, commerce scoring, brands, and campaigns (MVP).",
+    "version": "0.1.0"
+  },
+  "servers": [
+    { "url": "/api/v1", "description": "Relative (same host)" },
+    { "url": "http://localhost:4000/api/v1", "description": "Local dev" }
+  ],
+  "tags": [
+    { "name": "Health", "description": "Service health" },
+    { "name": "Auth", "description": "Register, login, JWT (MVP)" },
+    { "name": "Creators", "description": "Creators, social accounts, ingestion, scoring" },
+    { "name": "Brands", "description": "Brand accounts" },
+    { "name": "Campaigns", "description": "Campaign lifecycle; WMS on campaign-creators" },
+    { "name": "CampaignCreators", "description": "Pairing WMS, content submit, affiliate links" },
+    { "name": "CampaignContents", "description": "Brand review of submitted assets" },
+    { "name": "Matching", "description": "Suggestions, intelligence refresh, brand–creator fit" },
+    { "name": "Admin", "description": "Admin-only: workflows, audit logs, app-user provisioning" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Health check",
+        "responses": {
+          "200": {
+            "description": "OK — database connected",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthOk" }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/creators": {
+      "get": {
+        "tags": ["Creators"],
+        "summary": "List creators",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "maximum": 100 } },
+          {
+            "name": "platform",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["INSTAGRAM", "TIKTOK"] }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Use commerceScore to sort by commerce score descending",
+            "schema": { "type": "string", "enum": ["commerceScore"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated creators with nested social accounts (each with metrics) and commerce score",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CreatorListResponse" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Creators"],
+        "summary": "Create creator",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateCreator" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Creator" }
+              }
+            }
+          },
+          "400": { "description": "Validation error" },
+          "409": { "description": "Creator with this email already exists" }
+        }
+      }
+    },
+    "/creators/{id}": {
+      "get": {
+        "tags": ["Creators"],
+        "summary": "Get creator by ID",
+        "parameters": [{ "$ref": "#/components/parameters/CreatorId" }],
+        "responses": {
+          "200": {
+            "description": "Creator with nested accounts; each account includes metrics and recent posts",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CreatorDetail" }
+              }
+            }
+          },
+          "404": { "description": "Not found" }
+        }
+      },
+      "put": {
+        "tags": ["Creators"],
+        "summary": "Update creator",
+        "parameters": [{ "$ref": "#/components/parameters/CreatorId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateCreator" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Creator" }
+              }
+            }
+          },
+          "404": { "description": "Not found" }
+        }
+      },
+      "delete": {
+        "tags": ["Creators"],
+        "summary": "Delete creator",
+        "parameters": [{ "$ref": "#/components/parameters/CreatorId" }],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "message": { "type": "string" } }
+                }
+              }
+            }
+          },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/creators/{id}/accounts": {
+      "post": {
+        "tags": ["Creators"],
+        "summary": "Add social account",
+        "parameters": [{ "$ref": "#/components/parameters/CreatorId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AddSocialAccount" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SocialAccount" }
+              }
+            }
+          },
+          "400": { "description": "Validation error" },
+          "404": { "description": "Creator not found" },
+          "409": { "description": "Account with this platform/username already exists" }
+        }
+      }
+    },
+    "/creators/{id}/accounts/{accountId}": {
+      "delete": {
+        "tags": ["Creators"],
+        "summary": "Remove social account",
+        "parameters": [
+          { "$ref": "#/components/parameters/CreatorId" },
+          { "$ref": "#/components/parameters/SocialAccountId" }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "message": { "type": "string" } }
+                }
+              }
+            }
+          },
+          "404": { "description": "Social account not found" }
+        }
+      }
+    },
+    "/creators/{id}/accounts/{accountId}/ingest": {
+      "post": {
+        "tags": ["Creators"],
+        "summary": "Trigger ingestion for a specific social account",
+        "parameters": [
+          { "$ref": "#/components/parameters/CreatorId" },
+          { "$ref": "#/components/parameters/SocialAccountId" }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "message": { "type": "string" } }
+                }
+              }
+            }
+          },
+          "404": { "description": "Social account not found" }
+        }
+      }
+    },
+    "/creators/{id}/calculate-score": {
+      "post": {
+        "tags": ["Creators"],
+        "summary": "Recalculate commerce score",
+        "parameters": [{ "$ref": "#/components/parameters/CreatorId" }],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CommerceScore" }
+              }
+            }
+          },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/brands": {
+      "get": {
+        "tags": ["Brands"],
+        "summary": "List brands",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20 } }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BrandListResponse" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Brands"],
+        "summary": "Create brand",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateBrand" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Brand" }
+              }
+            }
+          },
+          "409": { "description": "Email already exists" }
+        }
+      }
+    },
+    "/brands/{id}": {
+      "get": {
+        "tags": ["Brands"],
+        "summary": "Get brand with campaigns",
+        "parameters": [{ "$ref": "#/components/parameters/BrandId" }],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BrandWithCampaigns" }
+              }
+            }
+          },
+          "404": { "description": "Not found" }
+        }
+      },
+      "put": {
+        "tags": ["Brands"],
+        "summary": "Update brand",
+        "parameters": [{ "$ref": "#/components/parameters/BrandId" }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateBrand" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Brand" }
+              }
+            }
+          },
+          "404": { "description": "Not found" }
+        }
+      },
+      "delete": {
+        "tags": ["Brands"],
+        "summary": "Delete brand",
+        "parameters": [{ "$ref": "#/components/parameters/BrandId" }],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "message": { "type": "string" } }
+                }
+              }
+            }
+          },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/campaigns": {
+      "get": {
+        "tags": ["Campaigns"],
+        "summary": "List campaigns",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "$ref": "#/components/schemas/CampaignStatus" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CampaignListResponse" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Campaigns"],
+        "summary": "Create campaign",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateCampaign" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Campaign" }
+              }
+            }
+          },
+          "404": { "description": "Brand not found" }
+        }
+      }
+    },
+    "/campaigns/{id}": {
+      "get": {
+        "tags": ["Campaigns"],
+        "summary": "Get campaign",
+        "parameters": [{ "$ref": "#/components/parameters/CampaignId" }],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CampaignDetail" }
+              }
+            }
+          },
+          "404": { "description": "Not found" }
+        }
+      },
+      "put": {
+        "tags": ["Campaigns"],
+        "summary": "Update campaign",
+        "parameters": [{ "$ref": "#/components/parameters/CampaignId" }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateCampaign" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Campaign" }
+              }
+            }
+          },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/campaigns/{id}/status": {
+      "patch": {
+        "tags": ["Campaigns"],
+        "summary": "Transition campaign status",
+        "description": "Top-level campaign only: DRAFT→ACTIVE; ACTIVE↔PAUSED; ACTIVE|PAUSED→COMPLETED|CANCELLED. Pairing WMS is on campaign-creators.",
+        "parameters": [{ "$ref": "#/components/parameters/CampaignId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["status"],
+                "properties": {
+                  "status": { "$ref": "#/components/schemas/CampaignStatus" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Campaign" }
+              }
+            }
+          },
+          "400": { "description": "Invalid transition" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/campaigns/{id}/invite": {
+      "post": {
+        "tags": ["Campaigns"],
+        "summary": "Invite / recommend creator (ADMIN JWT)",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/CampaignId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["creatorId"],
+                "properties": { "creatorId": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Pairing created (AWAITING_CREATOR)" },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Not admin" },
+          "404": { "description": "Campaign or creator not found" },
+          "409": { "description": "Already paired" }
+        }
+      }
+    },
+    "/campaigns/{id}/recommend": {
+      "post": {
+        "tags": ["Campaigns"],
+        "summary": "Admin recommends creator (same as invite; ACTIVE campaign only)",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/CampaignId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["creatorId"],
+                "properties": { "creatorId": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Pairing created" },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Not admin" }
+        }
+      }
+    },
+    "/campaigns/{id}/affiliate-summary": {
+      "get": {
+        "tags": ["Campaigns"],
+        "summary": "Affiliate clicks/conversions summary for campaign",
+        "parameters": [{ "$ref": "#/components/parameters/CampaignId" }],
+        "responses": { "200": { "description": "Summary object" } }
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Register (BRAND creates brand row; CREATOR creates creator row; ADMIN needs adminRegisterSecret)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RegisterRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "User + JWT" },
+          "403": { "description": "Admin registration blocked" },
+          "409": { "description": "Email taken" }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "User + JWT" }, "401": { "description": "Invalid credentials" } }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Current user from JWT",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "User profile" }, "401": { "description": "Unauthorized" } }
+      }
+    },
+    "/campaign-creators/{id}/creator-response": {
+      "patch": {
+        "tags": ["CampaignCreators"],
+        "summary": "Creator accept/decline (AWAITING_CREATOR)",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["accept"],
+                "properties": { "accept": { "type": "boolean" } }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Updated pairing" } }
+      }
+    },
+    "/campaign-creators/{id}/brand-response": {
+      "patch": {
+        "tags": ["CampaignCreators"],
+        "summary": "Brand accept/decline (AWAITING_BRAND)",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["accept"],
+                "properties": { "accept": { "type": "boolean" } }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Updated pairing" } }
+      }
+    },
+    "/campaign-creators/{id}/contents": {
+      "get": {
+        "tags": ["CampaignCreators"],
+        "summary": "List content submissions for pairing",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "List" } }
+      },
+      "post": {
+        "tags": ["CampaignCreators"],
+        "summary": "Submit content metadata (creator JWT)",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "storageUrl": { "type": "string", "format": "uri" },
+                  "assetKey": { "type": "string" },
+                  "mimeType": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/campaign-contents/{id}/review": {
+      "patch": {
+        "tags": ["CampaignContents"],
+        "summary": "Brand review: approve | reject | revision",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["action"],
+                "properties": {
+                  "action": { "type": "string", "enum": ["approve", "reject", "revision"] },
+                  "reviewNote": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Updated content row" } }
+      }
+    },
+    "/matching/campaigns/{campaignId}/suggestions": {
+      "get": {
+        "tags": ["Matching"],
+        "summary": "Ranked creator suggestions for campaign",
+        "parameters": [
+          { "name": "campaignId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "platform", "in": "query", "schema": { "$ref": "#/components/schemas/Platform" } },
+          { "name": "minCommerceScore", "in": "query", "schema": { "type": "number" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Ranked list with fitScore" } }
+      }
+    },
+    "/matching/creators/{creatorId}/intelligence/refresh": {
+      "post": {
+        "tags": ["Matching"],
+        "summary": "Recompute scale, lastPostAt, commerce score",
+        "parameters": [{ "name": "creatorId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Creator with metrics" } }
+      }
+    },
+    "/admin/audit-logs": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List audit logs (admin only)",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } },
+          { "name": "actorUserId", "in": "query", "schema": { "type": "string" } },
+          { "name": "entityType", "in": "query", "schema": { "type": "string" } },
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date-time" } }
+        ],
+        "responses": { "200": { "description": "Paginated audit logs" }, "403": { "description": "Forbidden" } }
+      }
+    },
+    "/admin/workflows": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List workflow definitions",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "scope", "in": "query", "schema": { "type": "string", "enum": ["CAMPAIGN","CAMPAIGN_CREATOR","BRAND","CREATOR"] } }],
+        "responses": { "200": { "description": "Workflow definitions" } }
+      },
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Create new workflow version",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["scope", "definition"],
+                "properties": {
+                  "scope": { "type": "string", "enum": ["CAMPAIGN","CAMPAIGN_CREATOR","BRAND","CREATOR"] },
+                  "definition": { "type": "object" },
+                  "setActive": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Created" }, "400": { "description": "Invalid definition" } }
+      }
+    },
+    "/admin/workflows/{id}/activate": {
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Activate a workflow version",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Activated" } }
+      }
+    },
+    "/admin/workflows/{id}": {
+      "delete": {
+        "tags": ["Admin"],
+        "summary": "Delete a workflow definition",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Deleted" } }
+      }
+    },
+    "/admin/app-users": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List app users",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Paginated users" } }
+      },
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Create app user (with optional brand/creator)",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password", "role"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string", "minLength": 8 },
+                  "role": { "type": "string", "enum": ["ADMIN","CREATOR","BRAND"] },
+                  "brandName": { "type": "string" },
+                  "creatorName": { "type": "string" },
+                  "brandExtras": { "type": "object" },
+                  "creatorExtras": { "type": "object" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Created" }, "409": { "description": "Email already exists" } }
+      }
+    },
+    "/admin/app-users/{id}/password": {
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Reset user password",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["password"], "properties": { "password": { "type": "string", "minLength": 8 } } } } }
+        },
+        "responses": { "200": { "description": "Password updated" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Login via POST /auth/login; send Authorization: Bearer <token>"
+      }
+    },
+    "parameters": {
+      "CreatorId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "SocialAccountId": {
+        "name": "accountId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "BrandId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
+      "CampaignId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      }
+    },
+    "schemas": {
+      "HealthOk": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "ok" },
+          "db": { "type": "string", "example": "connected" },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      },
+      "HealthError": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string" },
+          "db": { "type": "string" },
+          "timestamp": { "type": "string" }
+        }
+      },
+      "Platform": { "type": "string", "enum": ["INSTAGRAM", "TIKTOK"] },
+      "CampaignStatus": {
+        "type": "string",
+        "enum": ["DRAFT", "ACTIVE", "PAUSED", "COMPLETED", "CANCELLED"]
+      },
+      "CampaignCreatorStatus": {
+        "type": "string",
+        "enum": [
+          "AWAITING_CREATOR",
+          "CREATOR_DECLINED",
+          "AWAITING_BRAND",
+          "BRAND_DECLINED",
+          "MATCHED",
+          "CONTENT_SUBMITTED",
+          "CONTENT_APPROVED",
+          "CONTENT_REVISION_REQUESTED",
+          "PUBLISHED",
+          "COMPLETED"
+        ]
+      },
+      "UserRole": { "type": "string", "enum": ["BRAND", "CREATOR", "ADMIN"] },
+      "CampaignContentStatus": {
+        "type": "string",
+        "enum": ["PENDING_BRAND_REVIEW", "APPROVED", "REJECTED", "REVISION_REQUESTED"]
+      },
+      "Creator": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email", "nullable": true },
+          "avatarUrl": { "type": "string", "nullable": true },
+          "bio": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SocialAccount": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "creatorId": { "type": "string" },
+          "platform": { "$ref": "#/components/schemas/Platform" },
+          "username": { "type": "string" },
+          "profileUrl": { "type": "string", "nullable": true },
+          "followerCount": { "type": "integer" },
+          "isConnected": { "type": "boolean" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SocialAccountWithMetrics": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SocialAccount" },
+          {
+            "type": "object",
+            "properties": {
+              "metrics": {
+                "nullable": true,
+                "allOf": [{ "$ref": "#/components/schemas/AccountMetrics" }]
+              }
+            }
+          }
+        ]
+      },
+      "SocialAccountDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SocialAccountWithMetrics" },
+          {
+            "type": "object",
+            "properties": {
+              "posts": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/ContentPost" }
+              }
+            }
+          }
+        ]
+      },
+      "ContentPost": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "accountId": { "type": "string" },
+          "postId": { "type": "string", "nullable": true },
+          "caption": { "type": "string", "nullable": true },
+          "mediaType": { "type": "string", "nullable": true },
+          "likes": { "type": "integer" },
+          "commentsCount": { "type": "integer" },
+          "views": { "type": "integer" },
+          "postedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AccountMetrics": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "accountId": { "type": "string" },
+          "avgLikes30d": { "type": "number" },
+          "avgComments30d": { "type": "number" },
+          "avgViews30d": { "type": "number" },
+          "engagementRate": { "type": "number" },
+          "contentTopics": { "type": "array", "items": { "type": "string" } },
+          "calculatedAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CommerceScore": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "creatorId": { "type": "string" },
+          "engagementScore": { "type": "number" },
+          "intentScore": { "type": "number" },
+          "commerceScore": { "type": "number" },
+          "calculatedAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreatorListResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/CreatorListItem" }
+          },
+          "meta": { "$ref": "#/components/schemas/PaginationMeta" }
+        }
+      },
+      "CreatorListItem": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Creator" },
+          {
+            "type": "object",
+            "properties": {
+              "accounts": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/SocialAccountWithMetrics" }
+              },
+              "commerceScore": {
+                "nullable": true,
+                "allOf": [{ "$ref": "#/components/schemas/CommerceScore" }]
+              }
+            }
+          }
+        ]
+      },
+      "CreatorDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Creator" },
+          {
+            "type": "object",
+            "properties": {
+              "accounts": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/SocialAccountDetail" }
+              },
+              "commerceScore": {
+                "nullable": true,
+                "allOf": [{ "$ref": "#/components/schemas/CommerceScore" }]
+              }
+            }
+          }
+        ]
+      },
+      "CreateCreator": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "maxLength": 200 },
+          "email": { "type": "string", "format": "email" },
+          "avatarUrl": { "type": "string", "format": "uri" },
+          "bio": { "type": "string" }
+        }
+      },
+      "UpdateCreator": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "maxLength": 200 },
+          "email": { "type": "string", "format": "email" },
+          "avatarUrl": { "type": "string", "format": "uri" },
+          "bio": { "type": "string" }
+        }
+      },
+      "AddSocialAccount": {
+        "type": "object",
+        "required": ["platform", "username"],
+        "properties": {
+          "platform": { "$ref": "#/components/schemas/Platform" },
+          "username": { "type": "string", "maxLength": 100 },
+          "profileUrl": { "type": "string", "format": "uri" },
+          "followerCount": { "type": "integer", "minimum": 0 },
+          "isConnected": { "type": "boolean" }
+        }
+      },
+      "Brand": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "website": { "type": "string", "nullable": true },
+          "category": { "type": "string", "nullable": true },
+          "email": { "type": "string", "format": "email" },
+          "notes": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "BrandWithCampaigns": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Brand" },
+          {
+            "type": "object",
+            "properties": {
+              "campaigns": { "type": "array", "items": { "type": "object" } }
+            }
+          }
+        ]
+      },
+      "BrandListResponse": {
+        "type": "object",
+        "properties": {
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/Brand" } },
+          "meta": { "$ref": "#/components/schemas/PaginationMeta" }
+        }
+      },
+      "CreateBrand": {
+        "type": "object",
+        "required": ["name", "email"],
+        "properties": {
+          "name": { "type": "string", "maxLength": 200 },
+          "email": { "type": "string", "format": "email" },
+          "website": { "type": "string", "format": "uri" },
+          "category": { "type": "string" },
+          "notes": { "type": "string" }
+        }
+      },
+      "UpdateBrand": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "website": { "type": "string", "format": "uri" },
+          "category": { "type": "string" },
+          "notes": { "type": "string" }
+        }
+      },
+      "Campaign": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "brandId": { "type": "string" },
+          "title": { "type": "string" },
+          "status": { "$ref": "#/components/schemas/CampaignStatus" },
+          "budget": { "type": "number", "nullable": true },
+          "brief": { "type": "string", "nullable": true },
+          "productInfo": { "type": "string", "nullable": true, "description": "JSON string or free text (MVP)" },
+          "commissionRate": { "type": "number", "nullable": true, "description": "Percentage e.g. 12.5" },
+          "startsAt": { "type": "string", "format": "date-time", "nullable": true },
+          "endsAt": { "type": "string", "format": "date-time", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CampaignDetail": {
+        "type": "object",
+        "description": "Campaign with brand and invited creators"
+      },
+      "CampaignListResponse": {
+        "type": "object",
+        "properties": {
+          "data": { "type": "array", "items": { "type": "object" } },
+          "meta": { "$ref": "#/components/schemas/PaginationMeta" }
+        }
+      },
+      "CreateCampaign": {
+        "type": "object",
+        "required": ["brandId", "title"],
+        "properties": {
+          "brandId": { "type": "string" },
+          "title": { "type": "string", "maxLength": 300 },
+          "budget": { "type": "number", "exclusiveMinimum": 0 },
+          "brief": { "type": "string" },
+          "productInfo": { "type": "string" },
+          "commissionRate": { "type": "number", "minimum": 0, "maximum": 100 },
+          "startsAt": { "type": "string", "format": "date-time" },
+          "endsAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "UpdateCampaign": {
+        "type": "object",
+        "properties": {
+          "brandId": { "type": "string" },
+          "title": { "type": "string" },
+          "budget": { "type": "number" },
+          "brief": { "type": "string" },
+          "productInfo": { "type": "string" },
+          "commissionRate": { "type": "number", "minimum": 0, "maximum": 100 },
+          "startsAt": { "type": "string", "format": "date-time" },
+          "endsAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PaginationMeta": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "integer" },
+          "limit": { "type": "integer" },
+          "total": { "type": "integer" },
+          "totalPages": { "type": "integer" }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["email", "password", "role"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 8 },
+          "role": { "$ref": "#/components/schemas/UserRole" },
+          "brandName": { "type": "string" },
+          "creatorName": { "type": "string" },
+          "adminRegisterSecret": { "type": "string", "description": "Required for ADMIN if ADMIN_REGISTER_SECRET is set" }
+        }
+      }
+    }
+  }
+}

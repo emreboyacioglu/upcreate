@@ -1,0 +1,403 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Platform {
+  INSTAGRAM
+  TIKTOK
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum CampaignCreatorStatus {
+  AWAITING_CREATOR
+  CREATOR_DECLINED
+  AWAITING_BRAND
+  BRAND_DECLINED
+  MATCHED
+  CONTENT_SUBMITTED
+  CONTENT_APPROVED
+  CONTENT_REVISION_REQUESTED
+  PUBLISHED
+  COMPLETED
+}
+
+enum CampaignContentStatus {
+  PENDING_BRAND_REVIEW
+  APPROVED
+  REJECTED
+  REVISION_REQUESTED
+}
+
+enum UserRole {
+  BRAND
+  CREATOR
+  ADMIN
+}
+
+enum BrandStatus {
+  ONBOARDING
+  ACTIVE
+  SUSPENDED
+  CHURNED
+}
+
+enum CreatorLifecycleStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+}
+
+enum WorkflowScope {
+  CAMPAIGN
+  CAMPAIGN_CREATOR
+  BRAND
+  CREATOR
+}
+
+model AppUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         UserRole
+  brandId      String?  @unique
+  creatorId    String?  @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  brand      Brand?    @relation("BrandAppUser", fields: [brandId], references: [id], onDelete: SetNull)
+  creator    Creator?  @relation("CreatorAppUser", fields: [creatorId], references: [id], onDelete: SetNull)
+  auditLogs  AuditLog[]
+
+  @@map("app_users")
+}
+
+enum CreatorScale {
+  NANO
+  MICRO
+  MID
+}
+
+model Creator {
+  id                     String                  @id @default(cuid())
+  name                   String
+  email                  String?                 @unique
+  avatarUrl              String?
+  bio                    String?
+  creatorScale           CreatorScale?
+  lastPostAt             DateTime?
+  audienceScreenshotUrl  String?
+  audienceJson           String?
+  status                 CreatorLifecycleStatus  @default(ACTIVE)
+  phone                  String?
+  country                String?
+  categories             String[]                @default([])
+  metadata               Json?
+  verificationNotes      String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+
+  accounts      SocialAccount[]
+  commerceScore CommerceScore?
+  campaigns     CampaignCreator[]
+  paymentInfo   PaymentInfo?
+  brandFits     BrandCreatorFit[]
+  appUser       AppUser? @relation("CreatorAppUser")
+
+  @@map("creators")
+}
+
+model SocialAccount {
+  id            String   @id @default(cuid())
+  creatorId     String
+  platform      Platform
+  username      String
+  profileUrl    String?
+  followerCount Int      @default(0)
+  isConnected   Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  creator Creator         @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  posts   ContentPost[]
+  metrics AccountMetrics?
+
+  @@unique([platform, username])
+  @@map("social_accounts")
+}
+
+model ContentPost {
+  id            String    @id @default(cuid())
+  accountId     String
+  postId        String?
+  caption       String?
+  mediaType     String?
+  likes         Int       @default(0)
+  commentsCount Int       @default(0)
+  views         Int       @default(0)
+  postedAt      DateTime?
+  createdAt     DateTime  @default(now())
+
+  account SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("content_posts")
+}
+
+model AccountMetrics {
+  id             String   @id @default(cuid())
+  accountId      String   @unique
+  avgLikes30d    Float    @default(0)
+  avgComments30d Float    @default(0)
+  avgViews30d    Float    @default(0)
+  engagementRate Float    @default(0)
+  contentTopics  String[] @default([])
+  calculatedAt   DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  account SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("account_metrics")
+}
+
+model CommerceScore {
+  id              String   @id @default(cuid())
+  creatorId       String   @unique
+  engagementScore Float    @default(0)
+  intentScore     Float    @default(0)
+  commerceScore   Float    @default(0)
+  calculatedAt    DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@map("commerce_scores")
+}
+
+model Brand {
+  id              String      @id @default(cuid())
+  name            String
+  website         String?
+  category        String?
+  industry        String?
+  email           String      @unique
+  notes           String?
+  status          BrandStatus @default(ACTIVE)
+  country         String?
+  taxId           String?
+  contactPhone    String?
+  billingAddress  Json?
+  metadata        Json?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  campaigns Campaign[]
+  brandFits BrandCreatorFit[]
+  appUser   AppUser? @relation("BrandAppUser")
+
+  @@map("brands")
+}
+
+model BrandCreatorFit {
+  id         String   @id @default(cuid())
+  brandId    String
+  creatorId  String
+  score      Float
+  computedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  brand   Brand   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([brandId, creatorId])
+  @@map("brand_creator_fits")
+}
+
+model Campaign {
+  id              String         @id @default(cuid())
+  brandId         String
+  title           String
+  status          CampaignStatus @default(DRAFT)
+  budget          Float?
+  brief           String?
+  productInfo     String?
+  commissionRate  Float?
+  startsAt        DateTime?
+  endsAt          DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  brand    Brand             @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  creators CampaignCreator[]
+
+  @@map("campaigns")
+}
+
+model CampaignCreator {
+  id          String                @id @default(cuid())
+  campaignId  String
+  creatorId   String
+  status      CampaignCreatorStatus @default(AWAITING_CREATOR)
+  invitedAt   DateTime              @default(now())
+  respondedAt DateTime?
+
+  campaign      Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  creator       Creator           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  transactions   Transaction[]
+  contents       CampaignContent[]
+  affiliateLinks AffiliateLink[]
+
+  @@unique([campaignId, creatorId])
+  @@map("campaign_creators")
+}
+
+model CampaignContent {
+  id                String                @id @default(cuid())
+  campaignCreatorId String
+  storageUrl        String?
+  assetKey          String?
+  mimeType          String?
+  status            CampaignContentStatus @default(PENDING_BRAND_REVIEW)
+  submittedAt       DateTime              @default(now())
+  reviewedAt        DateTime?
+  reviewNote        String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  campaignCreator CampaignCreator @relation(fields: [campaignCreatorId], references: [id], onDelete: Cascade)
+
+  @@map("campaign_contents")
+}
+
+model AffiliateLink {
+  id                String   @id @default(cuid())
+  campaignCreatorId String
+  code              String   @unique
+  destinationUrl    String
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  campaignCreator CampaignCreator @relation(fields: [campaignCreatorId], references: [id], onDelete: Cascade)
+  clicks          ClickEvent[]
+  conversions     Conversion[]
+
+  @@map("affiliate_links")
+}
+
+model ClickEvent {
+  id         String   @id @default(cuid())
+  linkId     String
+  occurredAt DateTime @default(now())
+  userAgent  String?
+  ipHash     String?
+
+  link AffiliateLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@map("click_events")
+}
+
+model Conversion {
+  id         String   @id @default(cuid())
+  linkId     String
+  orderId    String
+  amount     Float
+  currency   String   @default("TRY")
+  occurredAt DateTime @default(now())
+
+  link AffiliateLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, orderId])
+  @@map("conversions")
+}
+
+model PaymentInfo {
+  id            String   @id @default(cuid())
+  creatorId     String   @unique
+  bankName      String?
+  iban          String?
+  accountHolder String?
+  taxId         String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@map("payment_info")
+}
+
+enum TransactionType {
+  COMMISSION
+  BONUS
+  ADJUSTMENT
+  REFUND
+}
+
+enum TransactionStatus {
+  PENDING
+  APPROVED
+  PAID
+  CANCELLED
+}
+
+model Transaction {
+  id                String            @id @default(cuid())
+  campaignCreatorId String
+  type              TransactionType   @default(COMMISSION)
+  status            TransactionStatus @default(PENDING)
+  amount            Float
+  currency          String            @default("TRY")
+  description       String?
+  paidAt            DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  campaignCreator CampaignCreator @relation(fields: [campaignCreatorId], references: [id], onDelete: Cascade)
+
+  @@map("transactions")
+}
+
+model WorkflowDefinition {
+  id          String        @id @default(cuid())
+  scope       WorkflowScope
+  version     Int           @default(1)
+  isActive    Boolean       @default(false)
+  definition  Json
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([scope, version])
+  @@index([scope, isActive])
+  @@map("workflow_definitions")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  actorUserId String?
+  actorRole   UserRole
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  ipHash      String?
+  requestId   String?
+
+  actor AppUser? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorUserId])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}

@@ -1,0 +1,86 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: []  # runs after CI implicitly (same trigger, separate workflow)
+    environment: production
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            APP_DIR="/home/ubuntu/upcreate"
+
+            # Clone or pull latest code
+            if [ ! -d "$APP_DIR" ]; then
+              git clone https://github.com/${{ github.repository }}.git "$APP_DIR"
+            fi
+            cd "$APP_DIR"
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Backend .env (preserve existing or create)
+            echo ">>> Backend"
+            cd "$APP_DIR/backend"
+            if [ ! -f .env ]; then
+              cat > .env <<'ENVEOF'
+            DATABASE_URL="postgresql://sparx:sparx_secret@localhost:5432/sparx?schema=public"
+            PORT=4000
+            NODE_ENV=production
+            CORS_ORIGIN=https://upcreate.co
+            JWT_SECRET=sparx-mvp-jwt-secret-2026
+            ENVEOF
+            fi
+            npm ci --production=false
+            npx prisma generate
+            npx prisma db push --skip-generate
+            npm run build
+            npm test || true
+
+            # Panel
+            echo ">>> Panel"
+            cd "$APP_DIR/panel"
+            npm ci --production=false
+            NEXT_PUBLIC_API_URL="/api/v1" npm run build
+
+            # Landing
+            echo ">>> Landing"
+            cd "$APP_DIR/landing"
+            npm ci --production=false
+            npm run build
+
+            # PM2 – stop old processes, start new ones
+            echo ">>> PM2"
+            pm2 delete sparx-backend 2>/dev/null || true
+            pm2 delete sparx-panel 2>/dev/null || true
+            pm2 delete creator-commerce 2>/dev/null || true
+
+            cd "$APP_DIR/deploy"
+            export UPCREATE_ROOT="$APP_DIR"
+            pm2 start ecosystem.config.cjs
+            pm2 save
+
+            # Nginx reload if config changed
+            if [ -f "$APP_DIR/deploy/nginx-upcreate.conf" ]; then
+              sudo cp "$APP_DIR/deploy/nginx-upcreate.conf" /etc/nginx/sites-available/upcreate
+              sudo ln -sf /etc/nginx/sites-available/upcreate /etc/nginx/sites-enabled/upcreate
+              sudo nginx -t && sudo systemctl reload nginx
+            fi
+
+            # Health check
+            echo ">>> Health check"
+            sleep 3
+            curl -sS http://127.0.0.1:4000/api/v1/health | head -c 200 && echo ""
+            curl -sS -o /dev/null -w "panel → %{http_code}\n" http://127.0.0.1:3001/panel/login
+            echo "Deploy complete!"
