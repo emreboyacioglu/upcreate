@@ -71,6 +71,63 @@ export class AffiliateService {
     });
   }
 
+  async platformOverview() {
+    const links = await prisma.affiliateLink.findMany({
+      include: {
+        _count: { select: { clicks: true, conversions: true } },
+        conversions: true,
+        campaignCreator: {
+          include: { campaign: { select: { id: true, title: true } } },
+        },
+      },
+    });
+
+    const byCampaignMap = new Map<
+      string,
+      { campaignId: string; campaignTitle: string; linkCount: number; clicks: number; conversions: number; revenue: number }
+    >();
+
+    let totalClicks = 0;
+    let totalConversions = 0;
+    let totalRevenue = 0;
+
+    for (const link of links) {
+      const clicks = link._count.clicks;
+      const convs = link._count.conversions;
+      const rev = link.conversions.reduce((s, c) => s + c.amount, 0);
+
+      totalClicks += clicks;
+      totalConversions += convs;
+      totalRevenue += rev;
+
+      const cId = link.campaignCreator.campaign.id;
+      const existing = byCampaignMap.get(cId);
+      if (existing) {
+        existing.linkCount++;
+        existing.clicks += clicks;
+        existing.conversions += convs;
+        existing.revenue += rev;
+      } else {
+        byCampaignMap.set(cId, {
+          campaignId: cId,
+          campaignTitle: link.campaignCreator.campaign.title,
+          linkCount: 1,
+          clicks,
+          conversions: convs,
+          revenue: rev,
+        });
+      }
+    }
+
+    return {
+      totalLinks: links.length,
+      totalClicks,
+      totalConversions,
+      totalRevenue,
+      byCampaign: Array.from(byCampaignMap.values()),
+    };
+  }
+
   async summaryForCampaign(campaignId: string) {
     const links = await prisma.affiliateLink.findMany({
       where: { campaignCreator: { campaignId } },

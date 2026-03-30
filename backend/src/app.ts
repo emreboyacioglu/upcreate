@@ -11,6 +11,7 @@ import { authRouter } from "./routes/auth";
 import { campaignCreatorsRouter } from "./routes/campaignCreators";
 import { campaignContentsRouter } from "./routes/campaignContents";
 import { matchingRouter } from "./routes/matching";
+import { trackingRouter } from "./routes/tracking";
 import { redirectRouter } from "./routes/redirect";
 import { meRouter } from "./routes/me";
 import { adminRouter } from "./routes/admin";
@@ -37,6 +38,7 @@ app.use("/api/v1/campaign-creators", campaignCreatorsRouter);
 app.use("/api/v1/campaign-contents", campaignContentsRouter);
 app.use("/api/v1/matching", matchingRouter);
 app.use("/api/v1/transactions", transactionsRouter);
+app.use("/api/v1/tracking", trackingRouter);
 app.use("/api/v1/analytics", analyticsRouter);
 
 app.use(errorHandler);

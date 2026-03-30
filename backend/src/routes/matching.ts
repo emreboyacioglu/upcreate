@@ -2,8 +2,32 @@ import { Router } from "express";
 import { z } from "zod";
 import { Platform } from "@prisma/client";
 import { matchingService } from "../business";
+import { authenticateOptional, requireAuth, requireRole } from "../middleware/auth";
 
 export const matchingRouter = Router();
+
+const overviewQuerySchema = z.object({
+  page: z.coerce.number().min(1).optional(),
+  limit: z.coerce.number().min(1).max(50).optional(),
+  status: z.string().optional(),
+  campaignId: z.string().uuid().optional(),
+});
+
+matchingRouter.get("/overview", authenticateOptional, requireAuth, requireRole("ADMIN"), async (req, res, next) => {
+  try {
+    const parsed = overviewQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: parsed.error.issues.map((e) => ({ path: e.path.join("."), message: e.message })),
+      });
+    }
+    const result = await matchingService.matchingOverview(parsed.data);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
 
 const suggestionsQuerySchema = z.object({
   platform: z.nativeEnum(Platform).optional(),

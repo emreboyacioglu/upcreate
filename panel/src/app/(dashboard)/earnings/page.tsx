@@ -34,7 +34,7 @@ interface PaginatedResponse {
   meta: { page: number; limit: number; total: number; totalPages: number };
 }
 
-export default function TransactionsPage() {
+export default function EarningsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState({ page: 1, totalPages: 1 });
@@ -61,8 +61,8 @@ export default function TransactionsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Transactions</h1>
-        <p className="text-muted-foreground">Payment and commission tracking</p>
+        <h1 className="text-2xl font-bold">Earnings</h1>
+        <p className="text-muted-foreground">Commission earnings and payment tracking</p>
       </div>
 
       <Card>
@@ -82,7 +82,7 @@ export default function TransactionsPage() {
               {transactions.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
-                    No transactions found
+                    No earnings found
                   </TableCell>
                 </TableRow>
               ) : (

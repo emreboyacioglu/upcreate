@@ -74,6 +74,63 @@ export class MatchingService {
     });
   }
 
+  async matchingOverview(opts: { page?: number; limit?: number; status?: string; campaignId?: string } = {}) {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(50, Math.max(1, opts.limit ?? 20));
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (opts.status) where.status = opts.status;
+    if (opts.campaignId) where.campaignId = opts.campaignId;
+
+    const [data, total] = await Promise.all([
+      prisma.campaignCreator.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { invitedAt: "desc" },
+        include: {
+          campaign: { select: { id: true, title: true, status: true } },
+          creator: { select: { id: true, name: true, creatorScale: true } },
+        },
+      }),
+      prisma.campaignCreator.count({ where }),
+    ]);
+
+    // Fetch fit scores for all pairs
+    const fitScores = await prisma.brandCreatorFit.findMany({
+      where: {
+        creatorId: { in: data.map((d) => d.creatorId) },
+      },
+    });
+    const fitMap = new Map(fitScores.map((f) => [`${f.brandId}_${f.creatorId}`, f.score]));
+
+    // Get campaign brandIds for fit lookup
+    const campaignIds = [...new Set(data.map((d) => d.campaignId))];
+    const campaigns = await prisma.campaign.findMany({
+      where: { id: { in: campaignIds } },
+      select: { id: true, brandId: true },
+    });
+    const campaignBrandMap = new Map(campaigns.map((c) => [c.id, c.brandId]));
+
+    return {
+      data: data.map((d) => {
+        const brandId = campaignBrandMap.get(d.campaignId);
+        const fitScore = brandId ? fitMap.get(`${brandId}_${d.creatorId}`) ?? null : null;
+        return {
+          id: d.id,
+          status: d.status,
+          invitedAt: d.invitedAt,
+          respondedAt: d.respondedAt ?? null,
+          campaign: d.campaign,
+          creator: d.creator,
+          fitScore,
+        };
+      }),
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
   async suggestions(
     campaignId: string,
     opts: { platform?: Platform; minCommerceScore?: number; limit?: number } = {},
