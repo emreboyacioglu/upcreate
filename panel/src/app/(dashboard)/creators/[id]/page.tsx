@@ -17,6 +17,10 @@ import {
   Globe,
   Heart,
   MessageCircle,
+  Instagram,
+  Loader2,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 
 interface CreatorDetail {
@@ -31,9 +35,12 @@ interface CreatorDetail {
   accounts: Array<{
     id: string;
     platform: string;
-    handle: string;
+    username: string;
+    handle?: string;
     followerCount: number;
-    isVerified: boolean;
+    isConnected: boolean;
+    isVerified?: boolean;
+    lastIngestedAt: string | null;
   }>;
   paymentInfo: {
     bankName: string;
@@ -127,6 +134,8 @@ export default function CreatorDetailPage() {
   const [tab, setTab] = useState<Tab>("overview");
   const [loading, setLoading] = useState(true);
   const [computing, setComputing] = useState(false);
+  const [ingestingAccount, setIngestingAccount] = useState<string | null>(null);
+  const [ingestResult, setIngestResult] = useState<{ accountId: string; success: boolean; message: string } | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -150,6 +159,22 @@ export default function CreatorDetailPage() {
       console.error(err);
     } finally {
       setComputing(false);
+    }
+  };
+
+  const ingestAccount = async (accountId: string) => {
+    setIngestingAccount(accountId);
+    setIngestResult(null);
+    try {
+      const result = await api.post<{ message: string }>(`/creators/${id}/accounts/${accountId}/ingest`);
+      setIngestResult({ accountId, success: true, message: result.message });
+      // Refresh creator data to get updated follower counts
+      const updated = await api.get<CreatorDetail>(`/creators/${id}`);
+      setCreator(updated);
+    } catch (err: any) {
+      setIngestResult({ accountId, success: false, message: err.message || "Veri cekimi basarisiz" });
+    } finally {
+      setIngestingAccount(null);
     }
   };
 
@@ -279,22 +304,57 @@ export default function CreatorDetailPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Social Accounts</CardTitle>
+              <CardTitle>Sosyal Hesaplar</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              {ingestResult && (
+                <div className={`flex items-center gap-2 rounded-lg p-3 text-sm ${ingestResult.success ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+                  {ingestResult.success ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+                  {ingestResult.message}
+                </div>
+              )}
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {(creator.accounts || []).map((acc) => (
-                  <div key={acc.id} className="flex items-center gap-3 rounded-lg border border-border p-4">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm">
-                      {acc.platform[0]}
+                  <div key={acc.id} className="rounded-lg border border-border p-4 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        {acc.platform === "INSTAGRAM" ? (
+                          <Instagram className={`h-5 w-5 ${acc.isConnected ? "text-pink-500" : ""}`} />
+                        ) : (
+                          <span className="font-bold text-sm">{acc.platform[0]}</span>
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium">@{acc.username || acc.handle}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {acc.platform} · {formatNumber(acc.followerCount)} takipci
+                          {acc.isConnected && (
+                            <span className="text-emerald-600"> · Bagli</span>
+                          )}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium">{acc.handle}</p>
+                    {acc.lastIngestedAt && (
                       <p className="text-xs text-muted-foreground">
-                        {acc.platform} · {formatNumber(acc.followerCount)} followers
-                        {acc.isVerified && " · Verified"}
+                        Son veri: {formatDate(acc.lastIngestedAt)}
                       </p>
-                    </div>
+                    )}
+                    {acc.platform === "INSTAGRAM" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full gap-2"
+                        disabled={ingestingAccount === acc.id}
+                        onClick={() => ingestAccount(acc.id)}
+                      >
+                        {ingestingAccount === acc.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                        {ingestingAccount === acc.id ? "Veriler cekiliyor..." : "Instagram Verilerini Cek"}
+                      </Button>
+                    )}
                   </div>
                 ))}
               </div>

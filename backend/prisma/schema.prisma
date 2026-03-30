@@ -125,9 +125,10 @@ model SocialAccount {
   username      String
   profileUrl    String?
   followerCount Int      @default(0)
-  isConnected   Boolean  @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  isConnected    Boolean   @default(false)
+  lastIngestedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   creator Creator         @relation(fields: [creatorId], references: [id], onDelete: Cascade)
   posts   ContentPost[]

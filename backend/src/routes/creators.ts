@@ -4,7 +4,7 @@ import { UserRole, CreatorLifecycleStatus } from "@prisma/client";
 import { validate } from "../middleware/validate";
 import { creatorService, analyticsService } from "../business";
 import { calculateCommerceScore } from "../services/scoring";
-import { ingestInstagram, ingestTikTok } from "../services/ingestion";
+import { ingestInstagram, ingestTikTok, ingestAllConnected } from "../services/ingestion";
 import { prisma } from "../config/db";
 import { AppError } from "../middleware/errorHandler";
 import { authenticateOptional, requireAuth, requireRole } from "../middleware/auth";
@@ -55,6 +55,18 @@ creatorsRouter.get("/", requireAuth, requireRole(UserRole.ADMIN), async (req, re
       sort: req.query.sort as string,
       search: req.query.search as string,
     });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+creatorsRouter.post("/ingest-all-connected", requireAuth, requireRole(UserRole.ADMIN), async (req, res, next) => {
+  try {
+    const platform = req.query.platform as string | undefined;
+    const validPlatform = platform === "INSTAGRAM" || platform === "TIKTOK" ? platform : undefined;
+    const result = await ingestAllConnected(validPlatform);
+    await logAudit(req, "creator.bulk_ingest", "SocialAccount", undefined, { total: result.total, success: result.success });
     res.json(result);
   } catch (err) {
     next(err);
@@ -141,17 +153,18 @@ creatorsRouter.post("/:id/accounts/:accountId/ingest", requireAuth, requireAdmin
     });
     if (!account) throw new AppError(404, "Social account not found");
 
-    const message =
+    const result =
       account.platform === "INSTAGRAM"
-        ? await ingestInstagram(account.username)
-        : await ingestTikTok(account.username);
+        ? await ingestInstagram(account.id, account.username)
+        : await ingestTikTok(account.id, account.username);
 
     await logAudit(req, "creator.account.ingest", "SocialAccount", accountId, { creatorId: id });
-    res.json({ message });
+    res.json(result);
   } catch (err) {
     next(err);
   }
 });
+
 
 creatorsRouter.post("/:id/calculate-score", requireAuth, requireRole(UserRole.ADMIN), async (req, res, next) => {
   try {
