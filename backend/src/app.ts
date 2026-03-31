@@ -21,7 +21,10 @@ import { mountSwagger } from "./docs/swagger";
 
 export const app = express();
 
-app.use(cors({ origin: process.env.CORS_ORIGIN || "*" }));
+const corsOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
+  : ["*"];
+app.use(cors({ origin: corsOrigins.length === 1 && corsOrigins[0] === "*" ? "*" : corsOrigins, credentials: true }));
 app.use(express.json());
 
 mountSwagger(app);
