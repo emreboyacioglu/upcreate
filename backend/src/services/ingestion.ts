@@ -61,8 +61,13 @@ export interface BulkIngestResult {
 
 /** How many days of posts to keep per account */
 const DATA_RETENTION_DAYS = 90;
-/** Max posts to fetch per ingestion (IG returns 25 per page) */
-const MAX_POSTS_PER_INGEST = 50;
+/**
+ * Only keep posts within the retention window.
+ * Pagination continues until we run out of pages OR hit a post older than retention.
+ * IG returns 25 per page; for 90-day retention a typical active creator has ~30-90 posts.
+ * Hard safety cap to avoid runaway pagination (e.g. accounts with 10K+ posts).
+ */
+const MAX_POSTS_PER_INGEST = 500;
 
 // --- Instagram Graph API ---
 
@@ -141,15 +146,21 @@ async function fetchIGProfileDirect(igAccountId: string, token: string): Promise
 }
 
 /**
- * Fetch recent media for an IG account directly.
- * Paginates up to MAX_POSTS_PER_INGEST posts.
+ * Fetch media for an IG account directly.
+ * Paginates through all pages, stopping when:
+ * - Posts are older than the retention window (90 days)
+ * - Safety cap reached (MAX_POSTS_PER_INGEST)
+ * - No more pages
  */
 async function fetchIGMediaDirect(igAccountId: string, token: string): Promise<RawPost[]> {
   const fields = "id,caption,media_type,like_count,comments_count,timestamp";
   let url: string | null = `${IG_GRAPH_URL}/${igAccountId}/media?fields=${fields}&limit=25&access_token=${encodeURIComponent(token)}`;
   const allPosts: RawPost[] = [];
+  const retentionCutoff = new Date();
+  retentionCutoff.setDate(retentionCutoff.getDate() - DATA_RETENTION_DAYS);
+  let hitRetentionLimit = false;
 
-  while (url && allPosts.length < MAX_POSTS_PER_INGEST) {
+  while (url && allPosts.length < MAX_POSTS_PER_INGEST && !hitRetentionLimit) {
     const res = await fetch(url);
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -158,6 +169,12 @@ async function fetchIGMediaDirect(igAccountId: string, token: string): Promise<R
     const data = (await res.json()) as IGMediaResponse;
 
     for (const m of data.data) {
+      const postedAt = m.timestamp ? new Date(m.timestamp) : undefined;
+      // Stop if post is older than retention window
+      if (postedAt && postedAt < retentionCutoff) {
+        hitRetentionLimit = true;
+        break;
+      }
       allPosts.push({
         postId: m.id,
         caption: m.caption || undefined,
@@ -165,11 +182,11 @@ async function fetchIGMediaDirect(igAccountId: string, token: string): Promise<R
         likes: m.like_count ?? 0,
         commentsCount: m.comments_count ?? 0,
         views: 0,
-        postedAt: m.timestamp ? new Date(m.timestamp) : undefined,
+        postedAt,
       });
     }
 
-    url = data.paging?.next || null;
+    url = hitRetentionLimit ? null : (data.paging?.next || null);
   }
 
   return allPosts;
