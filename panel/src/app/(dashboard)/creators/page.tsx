@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { formatNumber } from "@/lib/utils";
-import { Instagram, RefreshCw, Loader2 } from "lucide-react";
+import { Instagram, RefreshCw, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 
 interface SocialAccount {
   platform: string;
@@ -37,6 +37,7 @@ interface BulkIngestResult {
   total: number;
   success: number;
   failed: number;
+  tokenExpired?: boolean;
   results: Array<{ accountId: string; username: string; status: string; message: string }>;
 }
 
@@ -46,6 +47,7 @@ export default function CreatorsPage() {
   const [meta, setMeta] = useState({ page: 1, totalPages: 1, total: 0 });
   const [bulkIngesting, setBulkIngesting] = useState(false);
   const [bulkResult, setBulkResult] = useState<BulkIngestResult | null>(null);
+  const [tokenStatus, setTokenStatus] = useState<{ valid: boolean; expiresAt?: string; error?: string } | null>(null);
 
   const fetchCreators = useCallback((page: number) => {
     setLoading(true);
@@ -62,6 +64,12 @@ export default function CreatorsPage() {
   useEffect(() => {
     fetchCreators(meta.page);
   }, [meta.page, fetchCreators]);
+
+  useEffect(() => {
+    api.get<{ valid: boolean; expiresAt?: string; error?: string }>("/creators/ig-token-status")
+      .then(setTokenStatus)
+      .catch(() => setTokenStatus({ valid: false, error: "Token durumu alinamadi" }));
+  }, []);
 
   const handleBulkIngest = async () => {
     setBulkIngesting(true);
@@ -94,8 +102,31 @@ export default function CreatorsPage() {
     );
   }
 
+  const daysUntilExpiry = tokenStatus?.expiresAt
+    ? Math.ceil((new Date(tokenStatus.expiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : null;
+
   return (
     <div className="space-y-6">
+      {tokenStatus && !tokenStatus.valid && (
+        <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+          <div className="flex-1">
+            <p className="font-medium text-amber-800">Instagram Token Gecersiz</p>
+            <p className="text-sm text-amber-700">{tokenStatus.error || "Token suresi dolmus. Yeni token gerekli."}</p>
+          </div>
+        </div>
+      )}
+      {tokenStatus?.valid && daysUntilExpiry !== null && daysUntilExpiry <= 7 && (
+        <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+          <div className="flex-1">
+            <p className="font-medium text-amber-800">Instagram Token {daysUntilExpiry} Gun Icinde Dolacak</p>
+            <p className="text-sm text-amber-700">Veri cekimi durmasin diye tokeni yenileyin.</p>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Creators</h1>
@@ -126,6 +157,9 @@ export default function CreatorsPage() {
               <Badge variant="default">{bulkResult.success} basarili</Badge>
               {bulkResult.failed > 0 && (
                 <Badge variant="destructive">{bulkResult.failed} hatali</Badge>
+              )}
+              {bulkResult.tokenExpired && (
+                <Badge variant="destructive">Token Suresi Dolmus!</Badge>
               )}
               <span className="text-muted-foreground">/ {bulkResult.total} toplam</span>
               <Button variant="ghost" size="sm" onClick={() => setBulkResult(null)} className="ml-auto text-xs">

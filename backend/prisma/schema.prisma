@@ -127,6 +127,7 @@ model SocialAccount {
   followerCount Int      @default(0)
   isConnected    Boolean   @default(false)
   lastIngestedAt DateTime?
+  metadata       Json?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 

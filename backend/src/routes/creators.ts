@@ -4,7 +4,7 @@ import { UserRole, CreatorLifecycleStatus } from "@prisma/client";
 import { validate } from "../middleware/validate";
 import { creatorService, analyticsService } from "../business";
 import { calculateCommerceScore } from "../services/scoring";
-import { ingestInstagram, ingestTikTok, ingestAllConnected } from "../services/ingestion";
+import { ingestInstagram, ingestTikTok, ingestAllConnected, checkTokenHealth, IngestionError } from "../services/ingestion";
 import { prisma } from "../config/db";
 import { AppError } from "../middleware/errorHandler";
 import { authenticateOptional, requireAuth, requireRole } from "../middleware/auth";
@@ -56,6 +56,15 @@ creatorsRouter.get("/", requireAuth, requireRole(UserRole.ADMIN), async (req, re
       search: req.query.search as string,
     });
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+creatorsRouter.get("/ig-token-status", requireAuth, requireRole(UserRole.ADMIN), async (req, res, next) => {
+  try {
+    const status = await checkTokenHealth();
+    res.json(status);
   } catch (err) {
     next(err);
   }
@@ -153,10 +162,21 @@ creatorsRouter.post("/:id/accounts/:accountId/ingest", requireAuth, requireAdmin
     });
     if (!account) throw new AppError(404, "Social account not found");
 
-    const result =
-      account.platform === "INSTAGRAM"
+    let result;
+    try {
+      result = account.platform === "INSTAGRAM"
         ? await ingestInstagram(account.id, account.username)
         : await ingestTikTok(account.id, account.username);
+    } catch (err) {
+      if (err instanceof IngestionError) {
+        const statusCode = err.code === "TOKEN_EXPIRED" || err.code === "TOKEN_INVALID" ? 401
+          : err.code === "RATE_LIMITED" ? 429
+          : err.code === "NOT_FOUND" ? 404
+          : 502;
+        return res.status(statusCode).json({ error: err.message, code: err.code, tokenExpired: err.code === "TOKEN_EXPIRED" });
+      }
+      throw err;
+    }
 
     await logAudit(req, "creator.account.ingest", "SocialAccount", accountId, { creatorId: id });
     res.json(result);
