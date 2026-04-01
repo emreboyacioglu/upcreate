@@ -59,8 +59,8 @@ export interface BulkIngestResult {
   }>;
 }
 
-/** How many days of posts to keep per account */
-const DATA_RETENTION_DAYS = 90;
+/** How many days of posts to keep per account (1 year — enough for seasonal analysis) */
+const DATA_RETENTION_DAYS = 365;
 /**
  * Only keep posts within the retention window.
  * Pagination continues until we run out of pages OR hit a post older than retention.
