@@ -5,6 +5,53 @@ export function normalizeValue(value: number, min: number, max: number): number 
   return Math.max(0, Math.min(1, (value - min) / (max - min)));
 }
 
+// --- Content Topic Extraction ---
+
+const TOPIC_KEYWORDS: Record<string, string[]> = {
+  yemek: ["yemek", "tarif", "mutfak", "lezzetli", "food", "recipe", "cook", "restoran", "kahvaltı", "yiyecek", "tatlı", "içecek", "smoothie", "vegan", "gluten"],
+  moda: ["moda", "kıyafet", "stil", "outfit", "fashion", "giyim", "elbise", "aksesuar", "trend", "tasarım", "şık"],
+  güzellik: ["güzellik", "makyaj", "cilt", "saç", "beauty", "makeup", "skincare", "parfüm", "kozmetik", "bakım"],
+  spor: ["spor", "fitness", "egzersiz", "antrenman", "koşu", "gym", "workout", "sağlıklı", "yoga", "pilates"],
+  seyahat: ["seyahat", "gezi", "tur", "tatil", "travel", "destination", "keşfet", "yolculuk", "otel", "şehir"],
+  teknoloji: ["teknoloji", "tech", "gadget", "telefon", "bilgisayar", "uygulama", "yazılım", "dijital", "ai", "yapay zeka"],
+  ev: ["ev", "dekorasyon", "interior", "home", "tasarım", "mobilya", "yaşam", "dekor"],
+  "anne-bebek": ["anne", "bebek", "çocuk", "aile", "doğum", "hamile", "mama", "oyuncak"],
+  doğa: ["doğa", "bitki", "bahçe", "nature", "çiçek", "yeşil", "çevre", "sürdürülebilir", "organik", "ekoloji"],
+  sanat: ["sanat", "art", "resim", "çizim", "müzik", "dans", "tiyatro", "yaratıcı", "fotoğraf", "tasarım"],
+  spor_otomotiv: ["araba", "motor", "otomobil", "araç", "car", "motorsport"],
+  finans: ["finans", "yatırım", "borsa", "kripto", "para", "finance", "investment"],
+  eğitim: ["eğitim", "öğrenci", "üniversite", "kurs", "öğrenmek", "education", "bilgi"],
+};
+
+/**
+ * Extract content topics from an array of captions using keyword matching.
+ * Returns a deduplicated array of detected topic labels.
+ */
+export function extractTopicsFromCaptions(captions: (string | null)[]): string[] {
+  const topicHits = new Map<string, number>();
+
+  for (const caption of captions) {
+    if (!caption) continue;
+    const lower = caption.toLowerCase();
+
+    for (const [topic, keywords] of Object.entries(TOPIC_KEYWORDS)) {
+      for (const kw of keywords) {
+        if (lower.includes(kw)) {
+          topicHits.set(topic, (topicHits.get(topic) ?? 0) + 1);
+          break; // Count topic once per caption
+        }
+      }
+    }
+  }
+
+  // Return topics that appear in at least 2 posts (or once if very few posts)
+  const minHits = captions.length >= 5 ? 2 : 1;
+  return Array.from(topicHits.entries())
+    .filter(([, hits]) => hits >= minHits)
+    .sort((a, b) => b[1] - a[1])
+    .map(([topic]) => topic);
+}
+
 export async function calculateAccountMetrics(accountId: string) {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -57,6 +104,15 @@ export async function calculateAccountMetrics(accountId: string) {
   const engagementRate =
     account.followerCount > 0 ? (avgLikes30d + avgComments30d) / account.followerCount : 0;
 
+  // Extract content topics from ALL stored captions (not just recent 30-day window)
+  const allPosts = await prisma.contentPost.findMany({
+    where: { accountId },
+    select: { caption: true },
+    orderBy: { postedAt: "desc" },
+    take: 100,
+  });
+  const contentTopics = extractTopicsFromCaptions(allPosts.map((p) => p.caption));
+
   return prisma.accountMetrics.upsert({
     where: { accountId },
     update: {
@@ -64,6 +120,7 @@ export async function calculateAccountMetrics(accountId: string) {
       avgComments30d,
       avgViews30d,
       engagementRate,
+      contentTopics,
       calculatedAt: new Date(),
     },
     create: {
@@ -72,6 +129,7 @@ export async function calculateAccountMetrics(accountId: string) {
       avgComments30d,
       avgViews30d,
       engagementRate,
+      contentTopics,
     },
   });
 }

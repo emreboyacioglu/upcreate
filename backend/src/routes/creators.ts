@@ -4,7 +4,7 @@ import { UserRole, CreatorLifecycleStatus } from "@prisma/client";
 import { validate } from "../middleware/validate";
 import { creatorService, analyticsService } from "../business";
 import { calculateCommerceScore } from "../services/scoring";
-import { ingestInstagram, ingestTikTok, ingestAllConnected, checkTokenHealth, IngestionError } from "../services/ingestion";
+import { ingestInstagram, ingestTikTok, ingestAllConnected, checkTokenHealth, IngestionError, exchangeForLongLivedToken, refreshLongLivedToken, saveAccountToken } from "../services/ingestion";
 import { prisma } from "../config/db";
 import { AppError } from "../middleware/errorHandler";
 import { authenticateOptional, requireAuth, requireRole } from "../middleware/auth";
@@ -148,6 +148,88 @@ creatorsRouter.delete("/:id/accounts/:accountId", requireAuth, requireAdminOrOwn
     const result = await creatorService.removeAccount(id, accountId);
     await logAudit(req, "creator.account.remove", "SocialAccount", accountId, { creatorId: id });
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Exchange a short-lived IG token for a long-lived (60-day) token and store it on the account */
+creatorsRouter.post("/:id/accounts/:accountId/exchange-token", requireAuth, requireAdminOrOwnCreator, async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const accountId = req.params.accountId as string;
+    const { shortLivedToken } = req.body;
+    if (!shortLivedToken || typeof shortLivedToken !== "string") {
+      return res.status(400).json({ error: "shortLivedToken is required" });
+    }
+    const account = await prisma.socialAccount.findFirst({ where: { id: accountId, creatorId: id } });
+    if (!account) throw new AppError(404, "Social account not found");
+
+    const result = await exchangeForLongLivedToken(shortLivedToken);
+    await saveAccountToken(accountId, result);
+    await logAudit(req, "creator.account.token.exchange", "SocialAccount", accountId, { creatorId: id });
+    res.json({ message: "Token exchanged and saved", expiresAt: result.expiresAt });
+  } catch (err) {
+    if (err instanceof IngestionError) {
+      return res.status(400).json({ error: err.message, code: err.code });
+    }
+    next(err);
+  }
+});
+
+/** Refresh an existing long-lived token (extend its 60-day window) */
+creatorsRouter.post("/:id/accounts/:accountId/refresh-token", requireAuth, requireAdminOrOwnCreator, async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const accountId = req.params.accountId as string;
+    const account = await prisma.socialAccount.findFirst({
+      where: { id: accountId, creatorId: id },
+      select: { accessToken: true },
+    });
+    if (!account) throw new AppError(404, "Social account not found");
+    if (!account.accessToken) {
+      return res.status(400).json({ error: "No token stored for this account. Use exchange-token first." });
+    }
+
+    const result = await refreshLongLivedToken(account.accessToken);
+    await saveAccountToken(accountId, result);
+    await logAudit(req, "creator.account.token.refresh", "SocialAccount", accountId, { creatorId: id });
+    res.json({ message: "Token refreshed", expiresAt: result.expiresAt });
+  } catch (err) {
+    if (err instanceof IngestionError) {
+      return res.status(err.code === "TOKEN_EXPIRED" ? 401 : 400).json({ error: err.message, code: err.code });
+    }
+    next(err);
+  }
+});
+
+/** Get token status for a specific social account */
+creatorsRouter.get("/:id/accounts/:accountId/token-status", requireAuth, requireAdminOrOwnCreator, async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const accountId = req.params.accountId as string;
+    const account = await prisma.socialAccount.findFirst({
+      where: { id: accountId, creatorId: id },
+      select: { accessToken: true, tokenExpiresAt: true, platform: true },
+    });
+    if (!account) throw new AppError(404, "Social account not found");
+
+    if (!account.accessToken) {
+      return res.json({ hasToken: false });
+    }
+
+    const now = new Date();
+    const expired = account.tokenExpiresAt ? account.tokenExpiresAt < now : false;
+    const daysLeft = account.tokenExpiresAt
+      ? Math.floor((account.tokenExpiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+      : null;
+
+    res.json({
+      hasToken: true,
+      expired,
+      daysLeft,
+      expiresAt: account.tokenExpiresAt,
+    });
   } catch (err) {
     next(err);
   }

@@ -21,6 +21,9 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
+  Key,
+  ShieldCheck,
+  AlertTriangle,
 } from "lucide-react";
 
 interface CreatorDetail {
@@ -161,17 +164,28 @@ export default function CreatorDetailPage() {
   const [computing, setComputing] = useState(false);
   const [ingestingAccount, setIngestingAccount] = useState<string | null>(null);
   const [ingestResult, setIngestResult] = useState<{ accountId: string; success: boolean; message: string } | null>(null);
+  const [tokenInput, setTokenInput] = useState<Record<string, string>>({});
+  const [tokenLoading, setTokenLoading] = useState<string | null>(null);
+  const [tokenResult, setTokenResult] = useState<{ accountId: string; success: boolean; message: string } | null>(null);
+  const [tokenStatus, setTokenStatus] = useState<Record<string, { hasToken: boolean; expired?: boolean; daysLeft?: number | null; expiresAt?: string }>>({});
 
   useEffect(() => {
     Promise.all([
       api.get<CreatorDetail>(`/creators/${id}`),
       api.get<IntelligenceProfile>(`/intelligence/${id}/profile`).catch(() => null),
-    ])
-      .then(([c, i]) => {
-        setCreator(c);
-        setIntel(i);
-      })
-      .catch(console.error)
+    ]).then(([c, i]) => {
+      setCreator(c);
+      setIntel(i);
+      // Fetch token status for each IG account
+      c.accounts?.forEach((acc) => {
+        if (acc.platform === "INSTAGRAM") {
+          api.get<{ hasToken: boolean; expired?: boolean; daysLeft?: number | null; expiresAt?: string }>(
+            `/creators/${id}/accounts/${acc.id}/token-status`
+          ).then((ts) => setTokenStatus((prev) => ({ ...prev, [acc.id]: ts }))).catch(() => {});
+        }
+      });
+    })
+        .catch(console.error)
       .finally(() => setLoading(false));
   }, [id]);
 
@@ -200,6 +214,47 @@ export default function CreatorDetailPage() {
       setIngestResult({ accountId, success: false, message: err.message || "Veri cekimi basarisiz" });
     } finally {
       setIngestingAccount(null);
+    }
+  };
+
+  const exchangeToken = async (accountId: string) => {
+    const token = tokenInput[accountId]?.trim();
+    if (!token) return;
+    setTokenLoading(accountId);
+    setTokenResult(null);
+    try {
+      const result = await api.post<{ message: string; expiresAt: string }>(
+        `/creators/${id}/accounts/${accountId}/exchange-token`,
+        { shortLivedToken: token }
+      );
+      const expiresAt = result.expiresAt;
+      const days = expiresAt ? Math.floor((new Date(expiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : 60;
+      setTokenResult({ accountId, success: true, message: `Token kaydedildi! ${days} gün geçerli.` });
+      setTokenInput((prev) => ({ ...prev, [accountId]: "" }));
+      setTokenStatus((prev) => ({ ...prev, [accountId]: { hasToken: true, expired: false, daysLeft: days, expiresAt } }));
+    } catch (err: any) {
+      setTokenResult({ accountId, success: false, message: err.message || "Token dönüşümü başarısız" });
+    } finally {
+      setTokenLoading(null);
+    }
+  };
+
+  const refreshToken = async (accountId: string) => {
+    setTokenLoading(accountId);
+    setTokenResult(null);
+    try {
+      const result = await api.post<{ message: string; expiresAt: string }>(
+        `/creators/${id}/accounts/${accountId}/refresh-token`,
+        {}
+      );
+      const expiresAt = result.expiresAt;
+      const days = expiresAt ? Math.floor((new Date(expiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : 60;
+      setTokenResult({ accountId, success: true, message: `Token yenilendi! ${days} gün geçerli.` });
+      setTokenStatus((prev) => ({ ...prev, [accountId]: { hasToken: true, expired: false, daysLeft: days, expiresAt } }));
+    } catch (err: any) {
+      setTokenResult({ accountId, success: false, message: err.message || "Token yenileme başarısız" });
+    } finally {
+      setTokenLoading(null);
     }
   };
 
@@ -365,20 +420,84 @@ export default function CreatorDetailPage() {
                       </p>
                     )}
                     {acc.platform === "INSTAGRAM" && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full gap-2"
-                        disabled={ingestingAccount === acc.id}
-                        onClick={() => ingestAccount(acc.id)}
-                      >
-                        {ingestingAccount === acc.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-3.5 w-3.5" />
+                      <div className="space-y-2">
+                        {/* Token Status */}
+                        {tokenStatus[acc.id] && (
+                          <div className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs ${
+                            !tokenStatus[acc.id].hasToken ? "bg-gray-50 text-gray-500" :
+                            tokenStatus[acc.id].expired ? "bg-red-50 text-red-600" :
+                            (tokenStatus[acc.id].daysLeft ?? 99) <= 7 ? "bg-amber-50 text-amber-600" :
+                            "bg-emerald-50 text-emerald-600"
+                          }`}>
+                            {!tokenStatus[acc.id].hasToken ? <Key className="h-3 w-3" /> :
+                             tokenStatus[acc.id].expired ? <AlertTriangle className="h-3 w-3" /> :
+                             <ShieldCheck className="h-3 w-3" />}
+                            {!tokenStatus[acc.id].hasToken ? "Token yok" :
+                             tokenStatus[acc.id].expired ? "Token süresi doldu!" :
+                             `Token geçerli · ${tokenStatus[acc.id].daysLeft}g kaldı`}
+                          </div>
                         )}
-                        {ingestingAccount === acc.id ? "Veriler cekiliyor..." : "Instagram Verilerini Cek"}
-                      </Button>
+
+                        {/* Token result message */}
+                        {tokenResult?.accountId === acc.id && (
+                          <div className={`flex items-center gap-1.5 rounded-md p-2 text-xs ${tokenResult.success ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+                            {tokenResult.success ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                            {tokenResult.message}
+                          </div>
+                        )}
+
+                        {/* Refresh token (if token stored) */}
+                        {tokenStatus[acc.id]?.hasToken && !tokenStatus[acc.id]?.expired && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full gap-2 text-xs"
+                            disabled={tokenLoading === acc.id}
+                            onClick={() => refreshToken(acc.id)}
+                          >
+                            {tokenLoading === acc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldCheck className="h-3 w-3" />}
+                            Token Yenile (60 gün)
+                          </Button>
+                        )}
+
+                        {/* Exchange token (if no token or expired) */}
+                        {(!tokenStatus[acc.id]?.hasToken || tokenStatus[acc.id]?.expired) && (
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              placeholder="Kısa süreli token yapıştır..."
+                              value={tokenInput[acc.id] || ""}
+                              onChange={(e) => setTokenInput((prev) => ({ ...prev, [acc.id]: e.target.value }))}
+                              className="flex-1 min-w-0 rounded-md border border-input bg-background px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            />
+                            <Button
+                              size="sm"
+                              className="shrink-0 gap-1 text-xs px-2"
+                              disabled={tokenLoading === acc.id || !tokenInput[acc.id]?.trim()}
+                              onClick={() => exchangeToken(acc.id)}
+                            >
+                              {tokenLoading === acc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Key className="h-3 w-3" />}
+                              Kaydet
+                            </Button>
+                          </div>
+                        )}
+
+                        {/* Ingest button */}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full gap-2"
+                          disabled={ingestingAccount === acc.id}
+                          onClick={() => ingestAccount(acc.id)}
+                        >
+                          {ingestingAccount === acc.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          )}
+                          {ingestingAccount === acc.id ? "Veriler cekiliyor..." : "Instagram Verilerini Cek"}
+                        </Button>
+                      </div>
                     )}
                   </div>
                 ))}

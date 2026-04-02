@@ -119,14 +119,16 @@ model Creator {
 }
 
 model SocialAccount {
-  id            String   @id @default(cuid())
-  creatorId     String
-  platform      Platform
-  username      String
-  profileUrl    String?
-  followerCount Int      @default(0)
+  id             String    @id @default(cuid())
+  creatorId      String
+  platform       Platform
+  username       String
+  profileUrl     String?
+  followerCount  Int       @default(0)
   isConnected    Boolean   @default(false)
   lastIngestedAt DateTime?
+  accessToken    String?
+  tokenExpiresAt DateTime?
   metadata       Json?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt

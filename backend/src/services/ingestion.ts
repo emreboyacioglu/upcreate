@@ -82,6 +82,33 @@ const MAX_POSTS_PER_INGEST = 500;
 
 const IG_GRAPH_URL = "https://graph.facebook.com/v21.0";
 
+/**
+ * Get the best available IG access token.
+ * Priority: per-account DB token → global env var fallback.
+ */
+async function getIgAccessTokenForAccount(accountId?: string): Promise<string> {
+  if (accountId) {
+    const account = await prisma.socialAccount.findUnique({
+      where: { id: accountId },
+      select: { accessToken: true, tokenExpiresAt: true },
+    });
+    if (account?.accessToken) {
+      // Warn if expires within 7 days but still use it
+      if (account.tokenExpiresAt) {
+        const daysLeft = (account.tokenExpiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+        if (daysLeft < 0) {
+          throw new IngestionError("Stored access token has expired", "TOKEN_EXPIRED");
+        }
+      }
+      return account.accessToken;
+    }
+  }
+  // Fallback to env var
+  const token = process.env.INSTAGRAM_ACCESS_TOKEN;
+  if (!token) throw new IngestionError("INSTAGRAM_ACCESS_TOKEN env var is not set", "CONFIG_ERROR");
+  return token;
+}
+
 function getIgAccessToken(): string {
   const token = process.env.INSTAGRAM_ACCESS_TOKEN;
   if (!token) throw new IngestionError("INSTAGRAM_ACCESS_TOKEN env var is not set", "CONFIG_ERROR");
@@ -92,6 +119,88 @@ function getIgAccountId(): string {
   const id = process.env.INSTAGRAM_ACCOUNT_ID;
   if (!id) throw new IngestionError("INSTAGRAM_ACCOUNT_ID env var is not set", "CONFIG_ERROR");
   return id;
+}
+
+// --- Token Exchange ---
+
+export interface TokenExchangeResult {
+  accessToken: string;
+  expiresAt: Date;
+  tokenType: string;
+}
+
+/**
+ * Exchange a short-lived IG User Token for a long-lived token (60 days).
+ * Requires FB_APP_ID and FB_APP_SECRET in env.
+ * Works for both Instagram Basic Display API and Graph API tokens.
+ */
+export async function exchangeForLongLivedToken(shortLivedToken: string): Promise<TokenExchangeResult> {
+  const appId = process.env.FB_APP_ID;
+  const appSecret = process.env.FB_APP_SECRET;
+
+  if (!appId || !appSecret) {
+    throw new IngestionError("FB_APP_ID and FB_APP_SECRET env vars are required for token exchange", "CONFIG_ERROR");
+  }
+
+  // Try Graph API exchange first
+  const url = `${IG_GRAPH_URL}/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&fb_exchange_token=${encodeURIComponent(shortLivedToken)}`;
+
+  const res = await fetch(url);
+  const body = await res.json() as any;
+
+  if (!res.ok || body.error) {
+    throw classifyIGError(body);
+  }
+
+  const expiresIn: number = body.expires_in ?? 5183944; // default ~60 days
+  const expiresAt = new Date(Date.now() + expiresIn * 1000);
+
+  return {
+    accessToken: body.access_token,
+    expiresAt,
+    tokenType: body.token_type ?? "bearer",
+  };
+}
+
+/**
+ * Refresh a long-lived token before expiry (must be called while token is still valid).
+ * IG long-lived tokens can be refreshed if they were issued within the last 60 days.
+ */
+export async function refreshLongLivedToken(longLivedToken: string): Promise<TokenExchangeResult> {
+  const url = `https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=${encodeURIComponent(longLivedToken)}`;
+
+  const res = await fetch(url);
+  const body = await res.json() as any;
+
+  if (!res.ok || body.error) {
+    // Try Graph API refresh as fallback
+    const graphUrl = `${IG_GRAPH_URL}/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(process.env.FB_APP_ID ?? "")}&client_secret=${encodeURIComponent(process.env.FB_APP_SECRET ?? "")}&fb_exchange_token=${encodeURIComponent(longLivedToken)}`;
+    const graphRes = await fetch(graphUrl);
+    const graphBody = await graphRes.json() as any;
+    if (!graphRes.ok || graphBody.error) throw classifyIGError(body);
+    const expiresIn: number = graphBody.expires_in ?? 5183944;
+    return { accessToken: graphBody.access_token, expiresAt: new Date(Date.now() + expiresIn * 1000), tokenType: "bearer" };
+  }
+
+  const expiresIn: number = body.expires_in ?? 5183944;
+  return {
+    accessToken: body.access_token,
+    expiresAt: new Date(Date.now() + expiresIn * 1000),
+    tokenType: body.token_type ?? "bearer",
+  };
+}
+
+/**
+ * Save a token to a social account record in the DB.
+ */
+export async function saveAccountToken(accountId: string, token: TokenExchangeResult): Promise<void> {
+  await prisma.socialAccount.update({
+    where: { id: accountId },
+    data: {
+      accessToken: token.accessToken,
+      tokenExpiresAt: token.expiresAt,
+    },
+  });
 }
 
 // --- Error Types ---
@@ -376,7 +485,8 @@ async function ingestCommentsForAccount(accountId: string, token: string): Promi
 export async function ingestInstagram(accountId: string, username: string): Promise<IngestResult> {
   console.log(`[ingestion] Instagram ingest started for @${username} (account: ${accountId})`);
 
-  const token = getIgAccessToken();
+  // Use per-account token if stored, otherwise fall back to global env token
+  const token = await getIgAccessTokenForAccount(accountId);
   const ownIgAccountId = getIgAccountId();
 
   let profile: IGProfileData;
