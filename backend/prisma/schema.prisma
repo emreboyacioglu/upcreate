@@ -151,9 +151,28 @@ model ContentPost {
   postedAt      DateTime?
   createdAt     DateTime  @default(now())
 
-  account SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account  SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  comments PostComment[]
 
   @@map("content_posts")
+}
+
+model PostComment {
+  id             String    @id @default(cuid())
+  postId         String
+  igId           String?   @unique
+  username       String
+  text           String
+  likeCount      Int       @default(0)
+  postedAt       DateTime?
+  isReply        Boolean   @default(false)
+  sentiment      String?
+  purchaseIntent Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+
+  post ContentPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@map("post_comments")
 }
 
 model AccountMetrics {

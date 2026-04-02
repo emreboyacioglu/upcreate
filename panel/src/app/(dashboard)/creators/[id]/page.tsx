@@ -87,6 +87,15 @@ interface IntelligenceProfile {
     ageRanges: Record<string, number>;
     genderSplit: Record<string, number>;
   } | null;
+  commentInsights: {
+    totalAnalyzed: number;
+    overallSentiment: number;
+    overallSentimentLabel: string;
+    purchaseIntentRate: number;
+    audienceEngagementDepth: number;
+    uniqueCommenters: number;
+    topCommenters: Array<{ username: string; count: number; avgSentiment: number }>;
+  } | null;
   computedAt: string;
 }
 
@@ -112,6 +121,22 @@ const REACH_COLORS: Record<string, string> = {
   MEDIUM: "bg-blue-100 text-blue-700",
   LOW: "bg-amber-100 text-amber-700",
   MINIMAL: "bg-red-100 text-red-700",
+};
+
+const SENTIMENT_COLORS: Record<string, string> = {
+  VERY_POSITIVE: "bg-emerald-100 text-emerald-700",
+  POSITIVE: "bg-blue-100 text-blue-700",
+  NEUTRAL: "bg-gray-100 text-gray-700",
+  NEGATIVE: "bg-orange-100 text-orange-700",
+  VERY_NEGATIVE: "bg-red-100 text-red-700",
+};
+
+const SENTIMENT_EMOJI: Record<string, string> = {
+  VERY_POSITIVE: "😍",
+  POSITIVE: "😊",
+  NEUTRAL: "😐",
+  NEGATIVE: "😕",
+  VERY_NEGATIVE: "😡",
 };
 
 function ScoreBar({ value, max = 1 }: { value: number; max?: number }) {
@@ -501,6 +526,58 @@ export default function CreatorDetailPage() {
                     )}
                   </CardContent>
                 </Card>
+
+                {/* Sentiment Score */}
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="flex items-center gap-2 mb-3">
+                      <MessageCircle className="h-4 w-4 text-primary" />
+                      <span className="text-sm font-medium text-muted-foreground">Yorum Duygusu</span>
+                    </div>
+                    {intel.commentInsights && intel.commentInsights.totalAnalyzed > 0 ? (
+                      <>
+                        <div className="flex items-center gap-3">
+                          <p className="text-3xl font-bold">
+                            {SENTIMENT_EMOJI[intel.commentInsights.overallSentimentLabel] || "😐"}{" "}
+                            {intel.commentInsights.overallSentiment > 0 ? "+" : ""}
+                            {intel.commentInsights.overallSentiment.toFixed(2)}
+                          </p>
+                          <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${SENTIMENT_COLORS[intel.commentInsights.overallSentimentLabel] || ""}`}>
+                            {intel.commentInsights.overallSentimentLabel}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {intel.commentInsights.totalAnalyzed} yorum analiz edildi · {intel.commentInsights.uniqueCommenters} benzersiz yorumcu
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">Yorum verisi yok</p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Purchase Intent */}
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="flex items-center gap-2 mb-3">
+                      <TrendingUp className="h-4 w-4 text-primary" />
+                      <span className="text-sm font-medium text-muted-foreground">Satin Alma Niyeti</span>
+                    </div>
+                    {intel.commentInsights && intel.commentInsights.totalAnalyzed > 0 ? (
+                      <>
+                        <p className="text-3xl font-bold">
+                          {(intel.commentInsights.purchaseIntentRate * 100).toFixed(1)}%
+                        </p>
+                        <ScoreBar value={intel.commentInsights.purchaseIntentRate} />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          yorumlarda satin alma niyeti orani
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">Yorum verisi yok</p>
+                    )}
+                  </CardContent>
+                </Card>
               </div>
 
               {/* Platform Breakdown */}
@@ -534,6 +611,35 @@ export default function CreatorDetailPage() {
                               <span className="font-mono text-muted-foreground">0.6 × eng + 0.4 × intent</span>
                             </div>
                           </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Top Commenters */}
+              {intel.commentInsights && intel.commentInsights.topCommenters.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>En Aktif Yorumcular</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {intel.commentInsights.topCommenters.map((c, i) => (
+                        <div key={c.username} className="flex items-center gap-3 rounded-lg border border-border p-3">
+                          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                            {i + 1}
+                          </span>
+                          <span className="font-medium text-sm">@{c.username}</span>
+                          <span className="text-xs text-muted-foreground">{c.count} yorum</span>
+                          <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-medium ${
+                            c.avgSentiment > 0.3 ? "bg-emerald-100 text-emerald-700" :
+                            c.avgSentiment < -0.3 ? "bg-red-100 text-red-700" :
+                            "bg-gray-100 text-gray-700"
+                          }`}>
+                            {c.avgSentiment > 0 ? "+" : ""}{c.avgSentiment.toFixed(2)}
+                          </span>
                         </div>
                       ))}
                     </div>

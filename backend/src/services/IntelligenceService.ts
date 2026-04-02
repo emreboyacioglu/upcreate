@@ -2,6 +2,7 @@ import { CreatorScale, Platform } from "@prisma/client";
 import { prisma } from "../config/db";
 import { AppError } from "../middleware/errorHandler";
 import { calculateAccountMetrics, normalizeValue } from "./scoring";
+import { analyzeCreatorComments, CreatorCommentInsights } from "./commentAnalysis";
 
 // --- Types ---
 
@@ -67,6 +68,7 @@ export interface IntelligenceProfile {
   creatorActivity: ActivityResult;
   recentContent: RecentContentItem[];
   audienceOverview: AudienceOverview | null;
+  commentInsights: CreatorCommentInsights | null;
   computedAt: Date;
 }
 
@@ -160,19 +162,60 @@ export class IntelligenceService {
       // Step 1: Engagement Score
       const engagementScore = 0.5 * engagementRate + 0.5 * normalizedViews;
 
-      // Step 2: Intent Score (comment ratio as proxy — keyword-based is optional in MVP)
+      // Step 2: Intent Score
+      // If we have comment-level purchase intent data, use it (keyword-based analysis).
+      // Otherwise fall back to comment ratio as proxy.
       let intentScore = 0;
       const connectedAccounts = platformAccounts.filter((a) => a.isConnected);
       if (connectedAccounts.length > 0) {
-        const posts = connectedAccounts.flatMap((a) => a.posts);
-        const totalComments = posts.reduce((s, p) => s + p.commentsCount, 0);
-        const totalLikes = posts.reduce((s, p) => s + p.likes, 0);
-        const totalEngagement = totalComments + totalLikes;
-        intentScore = totalEngagement > 0 ? totalComments / totalEngagement : 0;
+        // Check for analyzed comments with purchase intent
+        const commentStats = await prisma.postComment.aggregate({
+          where: {
+            post: { account: { creatorId, platform } },
+            sentiment: { not: null },
+          },
+          _count: true,
+        });
+        const intentComments = await prisma.postComment.count({
+          where: {
+            post: { account: { creatorId, platform } },
+            purchaseIntent: true,
+          },
+        });
+
+        if (commentStats._count > 0) {
+          // Use real comment-based purchase intent rate
+          intentScore = intentComments / commentStats._count;
+        } else {
+          // Fallback: comment ratio as proxy
+          const posts = connectedAccounts.flatMap((a) => a.posts);
+          const totalComments = posts.reduce((s, p) => s + p.commentsCount, 0);
+          const totalLikes = posts.reduce((s, p) => s + p.likes, 0);
+          const totalEngagement = totalComments + totalLikes;
+          intentScore = totalEngagement > 0 ? totalComments / totalEngagement : 0;
+        }
       }
 
       // Step 3: Platform Score
-      const platformScore = 0.6 * engagementScore + 0.4 * intentScore;
+      // If we have sentiment data, add a small sentiment bonus
+      let sentimentBonus = 0;
+      const sentimentComments = await prisma.postComment.findMany({
+        where: {
+          post: { account: { creatorId, platform } },
+          sentiment: { not: null },
+        },
+        select: { sentiment: true },
+      });
+      if (sentimentComments.length > 0) {
+        const pos = sentimentComments.filter((c) => c.sentiment === "POSITIVE").length;
+        const neg = sentimentComments.filter((c) => c.sentiment === "NEGATIVE").length;
+        const overallSentiment = (pos - neg) / sentimentComments.length; // -1 to +1
+        sentimentBonus = ((overallSentiment + 1) / 2) * 0.1; // max +0.1
+      }
+
+      const platformScore = sentimentBonus > 0
+        ? 0.6 * engagementScore + 0.3 * intentScore + sentimentBonus
+        : 0.6 * engagementScore + 0.4 * intentScore;
 
       platformScores.push({ platform, engagementScore, intentScore, platformScore });
     }
@@ -363,6 +406,17 @@ export class IntelligenceService {
     }));
   }
 
+  /** Analyze comments and return insights */
+  async computeCommentInsights(creatorId: string): Promise<CreatorCommentInsights | null> {
+    // Check if this creator has any comments stored
+    const commentCount = await prisma.postComment.count({
+      where: { post: { account: { creatorId } } },
+    });
+    if (commentCount === 0) return null;
+
+    return analyzeCreatorComments(creatorId);
+  }
+
   /** Save/update audience JSON */
   async saveAudienceData(creatorId: string, audienceJson: string) {
     // Validate it's valid JSON
@@ -383,7 +437,7 @@ export class IntelligenceService {
     const creator = await prisma.creator.findUnique({ where: { id: creatorId } });
     if (!creator) throw new AppError(404, "Creator not found");
 
-    const [commerceScore, engagementQuality, reachPotential, creatorScale, creatorActivity, recentContent, audienceOverview] =
+    const [commerceScore, engagementQuality, reachPotential, creatorScale, creatorActivity, recentContent, audienceOverview, commentInsights] =
       await Promise.all([
         this.computeCommerceScore(creatorId),
         this.computeEngagementQuality(creatorId),
@@ -392,6 +446,7 @@ export class IntelligenceService {
         this.computeCreatorActivity(creatorId),
         this.getRecentContent(creatorId),
         this.parseAudienceData(creatorId),
+        this.computeCommentInsights(creatorId),
       ]);
 
     return {
@@ -403,6 +458,7 @@ export class IntelligenceService {
       creatorActivity,
       recentContent,
       audienceOverview,
+      commentInsights,
       computedAt: new Date(),
     };
   }
@@ -506,6 +562,7 @@ export class IntelligenceService {
         platform: p.platform,
       })),
       audienceOverview,
+      commentInsights: null, // Populated on-demand via computeAll or /analyze-comments
       computedAt: creator.commerceScore?.calculatedAt ?? new Date(),
     };
   }

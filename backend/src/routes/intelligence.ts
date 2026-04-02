@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { intelligenceService } from "../services/IntelligenceService";
+import { analyzeCreatorComments } from "../services/commentAnalysis";
 import { authenticateOptional, requireAuth, requireRole } from "../middleware/auth";
 
 export const intelligenceRouter = Router();
@@ -42,6 +43,26 @@ intelligenceRouter.get("/:creatorId/content", async (req, res, next) => {
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 10));
     const content = await intelligenceService.getRecentContent(req.params.creatorId, limit);
     res.json({ data: content });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Get comment analysis insights */
+intelligenceRouter.get("/:creatorId/comments", async (req, res, next) => {
+  try {
+    const insights = await intelligenceService.computeCommentInsights(req.params.creatorId);
+    res.json(insights ?? { totalAnalyzed: 0, overallSentiment: 0, overallSentimentLabel: "NEUTRAL", purchaseIntentRate: 0, audienceEngagementDepth: 0, uniqueCommenters: 0, topCommenters: [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Re-analyze all comments for a creator (runs sentiment + intent analysis) */
+intelligenceRouter.post("/:creatorId/analyze-comments", async (req, res, next) => {
+  try {
+    const insights = await analyzeCreatorComments(req.params.creatorId);
+    res.json(insights);
   } catch (err) {
     next(err);
   }

@@ -38,6 +38,15 @@ interface IGMediaResponse {
   paging?: { cursors?: { after?: string }; next?: string };
 }
 
+interface IGCommentNode {
+  id: string;
+  text: string;
+  username: string;
+  like_count?: number;
+  timestamp?: string;
+  replies?: { data: IGCommentNode[] };
+}
+
 export interface IngestResult {
   message: string;
   postsIngested: number;
@@ -229,6 +238,131 @@ async function fetchIGProfileViaBusinessDiscovery(
   return { profile: bd, posts };
 }
 
+// --- Comment Fetching ---
+
+/** Max comments to fetch per post */
+const MAX_COMMENTS_PER_POST = 50;
+/** How many recent posts to fetch comments for during ingest */
+const COMMENT_FETCH_POST_LIMIT = 20;
+
+/**
+ * Fetch comments for a single IG media item.
+ * Only works for media owned by the authenticated account.
+ */
+async function fetchIGComments(mediaId: string, token: string): Promise<IGCommentNode[]> {
+  const fields = "id,text,username,like_count,timestamp,replies{id,text,username,like_count,timestamp}";
+  const url = `${IG_GRAPH_URL}/${mediaId}/comments?fields=${fields}&limit=${MAX_COMMENTS_PER_POST}&access_token=${encodeURIComponent(token)}`;
+
+  const res = await fetch(url);
+  if (!res.ok) {
+    // Comments might not be available for all media types — skip gracefully
+    const body = await res.json().catch(() => ({} as any));
+    const errCode = (body as any)?.error?.code;
+    if (errCode === 100 || errCode === 10) {
+      // 100 = unsupported get for this media, 10 = permission issue
+      return [];
+    }
+    throw classifyIGError(body);
+  }
+
+  const data = (await res.json()) as { data: IGCommentNode[] };
+  return data.data || [];
+}
+
+/**
+ * Save comments for a post. Upserts by igId to avoid duplicates.
+ * Also flattens replies into the same table with isReply=true.
+ */
+async function upsertPostComments(
+  dbPostId: string,
+  comments: IGCommentNode[],
+): Promise<number> {
+  let count = 0;
+
+  for (const c of comments) {
+    if (!c.id || !c.text) continue;
+
+    await prisma.postComment.upsert({
+      where: { igId: c.id },
+      update: {
+        text: c.text,
+        likeCount: c.like_count ?? 0,
+      },
+      create: {
+        postId: dbPostId,
+        igId: c.id,
+        username: c.username || "unknown",
+        text: c.text,
+        likeCount: c.like_count ?? 0,
+        postedAt: c.timestamp ? new Date(c.timestamp) : null,
+        isReply: false,
+      },
+    });
+    count++;
+
+    // Flatten replies
+    if (c.replies?.data) {
+      for (const r of c.replies.data) {
+        if (!r.id || !r.text) continue;
+        await prisma.postComment.upsert({
+          where: { igId: r.id },
+          update: {
+            text: r.text,
+            likeCount: r.like_count ?? 0,
+          },
+          create: {
+            postId: dbPostId,
+            igId: r.id,
+            username: r.username || "unknown",
+            text: r.text,
+            likeCount: r.like_count ?? 0,
+            postedAt: r.timestamp ? new Date(r.timestamp) : null,
+            isReply: true,
+          },
+        });
+        count++;
+      }
+    }
+  }
+
+  return count;
+}
+
+/**
+ * Fetch and save comments for the most recent posts of an account.
+ * Only works for directly connected accounts (own media).
+ */
+async function ingestCommentsForAccount(accountId: string, token: string): Promise<number> {
+  // Get the most recent posts that have an IG post ID
+  const recentPosts = await prisma.contentPost.findMany({
+    where: { accountId, postId: { not: null } },
+    orderBy: { postedAt: "desc" },
+    take: COMMENT_FETCH_POST_LIMIT,
+    select: { id: true, postId: true },
+  });
+
+  let totalComments = 0;
+
+  for (const post of recentPosts) {
+    if (!post.postId) continue;
+    try {
+      const comments = await fetchIGComments(post.postId, token);
+      if (comments.length > 0) {
+        const saved = await upsertPostComments(post.id, comments);
+        totalComments += saved;
+      }
+    } catch (err) {
+      if (err instanceof IngestionError && (err.code === "TOKEN_EXPIRED" || err.code === "TOKEN_INVALID")) {
+        throw err; // Bubble up token errors
+      }
+      // Skip individual post comment errors (rate limit, unsupported media, etc.)
+      console.warn(`[ingestion] Could not fetch comments for post ${post.postId}: ${(err as Error).message}`);
+    }
+  }
+
+  return totalComments;
+}
+
 // --- Core Ingestion ---
 
 /**
@@ -308,6 +442,22 @@ export async function ingestInstagram(accountId: string, username: string): Prom
 
   // Calculate metrics
   await calculateAndSaveMetrics(accountId, followersCount);
+
+  // Fetch comments for recent posts (only for direct API — we have token access)
+  let commentsIngested = 0;
+  if (igUserIdToTry) {
+    try {
+      commentsIngested = await ingestCommentsForAccount(accountId, token);
+      if (commentsIngested > 0) {
+        console.log(`[ingestion] Ingested ${commentsIngested} comments for @${username}`);
+      }
+    } catch (err) {
+      if (err instanceof IngestionError && (err.code === "TOKEN_EXPIRED" || err.code === "TOKEN_INVALID")) {
+        throw err;
+      }
+      console.warn(`[ingestion] Comment ingestion failed for @${username}: ${(err as Error).message}`);
+    }
+  }
 
   // Update creator profile
   const account = await prisma.socialAccount.findUnique({
