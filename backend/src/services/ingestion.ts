@@ -660,10 +660,20 @@ async function calculateAndSaveMetrics(accountId: string, followerCount: number)
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  const recentPosts = await prisma.contentPost.findMany({
+  let recentPosts = await prisma.contentPost.findMany({
     where: { accountId, postedAt: { gte: thirtyDaysAgo } },
     orderBy: { postedAt: "desc" },
   });
+
+  // If no posts in last 30 days, fall back to most recent 20 posts overall.
+  // This ensures creators with older content still get scored (e.g. vahaaco).
+  if (recentPosts.length === 0) {
+    recentPosts = await prisma.contentPost.findMany({
+      where: { accountId },
+      orderBy: { postedAt: "desc" },
+      take: 20,
+    });
+  }
 
   if (recentPosts.length === 0) return;
 

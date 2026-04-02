@@ -13,9 +13,18 @@ export async function calculateAccountMetrics(accountId: string) {
     where: { id: accountId },
   });
 
-  const posts = await prisma.contentPost.findMany({
+  let posts = await prisma.contentPost.findMany({
     where: { accountId, postedAt: { gte: thirtyDaysAgo } },
   });
+
+  // Fallback: if no recent posts, use the most recent 20 overall
+  if (posts.length === 0) {
+    posts = await prisma.contentPost.findMany({
+      where: { accountId },
+      orderBy: { postedAt: "desc" },
+      take: 20,
+    });
+  }
 
   if (posts.length === 0) {
     return prisma.accountMetrics.upsert({
